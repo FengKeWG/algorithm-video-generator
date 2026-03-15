@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "algorithm-video-generator"
+version = "0.1.0"
+description = "Generate Manim scripts and videos for ACM problems from structured solution materials."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Codex" }
+]
+dependencies = [
+  "flet[all]",
+  "openai",
+]
+
+[project.optional-dependencies]
+render = [
+  "manim>=0.19.0",
+]
+
+[project.scripts]
+algorithm-video-generator = "algorithm_video_generator.app:run"
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools.packages.find]
+where = ["src"]
