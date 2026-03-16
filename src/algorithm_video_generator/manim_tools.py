@@ -5,7 +5,6 @@ import subprocess
 import sys
 from pathlib import Path
 from shutil import which
-
 from algorithm_video_generator.models import RenderResult
 from algorithm_video_generator.utils import slugify_filename
 

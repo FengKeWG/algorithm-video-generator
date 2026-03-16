@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from typing import Any
-
 from openai import OpenAI
-
+from openai.types.chat import (
+    ChatCompletionSystemMessageParam,
+    ChatCompletionUserMessageParam,
+)
 from algorithm_video_generator.models import ApiConfig, GenerationRequest, GenerationResult
 from algorithm_video_generator.prompts import SYSTEM_PROMPT, build_user_prompt
 from algorithm_video_generator.utils import (
@@ -14,7 +16,6 @@ from algorithm_video_generator.utils import (
     has_required_manim_markers,
     repair_manim_code,
 )
-
 
 StatusCallback = Callable[[str], None]
 DeltaCallback = Callable[[str], None]
@@ -29,11 +30,10 @@ class ChatCompletionsClient:
         return self.generate_manim_script_stream(request)
 
     def generate_manim_script_stream(
-        self,
-        request: GenerationRequest,
-        on_status: StatusCallback | None = None,
-        on_delta: DeltaCallback | None = None,
-        on_debug: DebugCallback | None = None,
+            self,
+            request: GenerationRequest,
+            on_status: StatusCallback | None = None,
+            on_delta: DeltaCallback | None = None,
     ) -> GenerationResult:
         raw_parts: list[str] = []
 
@@ -41,53 +41,38 @@ class ChatCompletionsClient:
             on_status("正在建立 OpenAI 兼容 SSE 连接...")
 
         with OpenAI(
-            api_key=self._config.api_key.strip() or "EMPTY",
-            base_url=self._config.normalized_base_url(),
-            timeout=float(self._config.timeout_seconds),
-            max_retries=1,
+                api_key=self._config.api_key.strip() or "EMPTY",
+                base_url=self._config.normalized_base_url(),
+                timeout=float(self._config.timeout_seconds),
+                max_retries=1,
         ) as client:
-            with client.chat.completions.with_streaming_response.create(
+            messages = [
+                ChatCompletionSystemMessageParam(
+                    role="system",
+                    content=SYSTEM_PROMPT
+                ),
+                ChatCompletionUserMessageParam(
+                    role="user",
+                    content=build_user_prompt(request)
+                ),
+            ]
+            response = client.chat.completions.create(
                 model=self._config.model.strip(),
                 temperature=self._config.temperature,
                 stream=True,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": build_user_prompt(request)},
-                ],
-            ) as response:
-                if on_status:
-                    on_status("已连接，正在接收模型流式输出...")
-
-                for line in response.iter_lines():
-                    if not line:
-                        continue
-                    if line.startswith(":"):
-                        continue
-                    if not line.startswith("data:"):
-                        if on_debug:
-                            on_debug(f"SSE 原始行: {line}")
-                        continue
-
-                    payload = line[5:].strip()
-                    if payload == "[DONE]":
-                        break
-
-                    event = self._parse_sse_payload(payload, on_debug)
-                    if not event:
-                        continue
-
-                    error = event.get("error")
-                    if isinstance(error, dict):
-                        message = error.get("message")
-                        if isinstance(message, str) and message.strip():
-                            raise ValueError(message.strip())
-                        raise ValueError("接口返回了 SSE 错误事件。")
-
-                    delta_text = self._extract_chunk_text(event)
-                    if delta_text:
-                        raw_parts.append(delta_text)
-                        if on_delta:
-                            on_delta(delta_text)
+                messages=messages,
+            )
+            if on_status:
+                on_status("已连接，正在接收模型流式输出...")
+            for chunk in response:
+                # 提取增量文本
+                if not chunk.choices:
+                    continue
+                delta_content = chunk.choices[0].delta.content
+                if delta_content:
+                    raw_parts.append(delta_content)
+                    if on_delta:
+                        on_delta(delta_content)
 
         if on_status:
             on_status("流式输出结束，正在整理脚本...")

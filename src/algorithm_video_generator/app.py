@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import time
 import traceback
-from pathlib import Path
-
 import flet as ft
-
 from algorithm_video_generator.llm import ChatCompletionsClient
 from algorithm_video_generator.manim_tools import (
     default_script_path,
@@ -456,12 +453,12 @@ class AlgorithmVideoGeneratorApp:
         self.page.update()
 
     def _card(
-        self,
-        title: str,
-        subtitle: str,
-        controls: list[ft.Control],
-        expand: bool = False,
-        scroll: ft.ScrollMode | None = None,
+            self,
+            title: str,
+            subtitle: str,
+            controls: list[ft.Control],
+            expand: bool = False,
+            scroll: ft.ScrollMode | None = None,
     ) -> ft.Container:
         return ft.Container(
             expand=expand,
@@ -487,10 +484,10 @@ class AlgorithmVideoGeneratorApp:
         )
 
     def _settings_section(
-        self,
-        title: str,
-        subtitle: str,
-        controls: list[ft.Control],
+            self,
+            title: str,
+            subtitle: str,
+            controls: list[ft.Control],
     ) -> ft.Container:
         return ft.Container(
             padding=18,
@@ -513,10 +510,10 @@ class AlgorithmVideoGeneratorApp:
         )
 
     def _field_block(
-        self,
-        label: str,
-        control: ft.Control,
-        expand: bool = False,
+            self,
+            label: str,
+            control: ft.Control,
+            expand: bool = False,
     ) -> ft.Column:
         return ft.Column(
             expand=expand,
@@ -730,7 +727,7 @@ class AlgorithmVideoGeneratorApp:
 
 
 def format_exception(exc: Exception) -> str:
-    return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)).strip()
+    return "".join(traceback.format_exception(exc)).strip()
 
 
 def main(page: ft.Page) -> None:
