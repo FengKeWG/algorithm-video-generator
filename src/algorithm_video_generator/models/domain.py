@@ -35,9 +35,59 @@ class GenerationResult:
 
 
 @dataclass(slots=True)
+class StoryboardBeat:
+    id: str
+    title: str
+    narration: str
+    must_show: str
+    visual_notes: str
+    target_duration_seconds: float | None = None
+
+
+@dataclass(slots=True)
+class StoryboardSegment:
+    id: str
+    title: str
+    visual_goal: str
+    narration: str
+    animation_notes: str
+    beats: list[StoryboardBeat]
+    target_duration_seconds: float | None = None
+
+
+@dataclass(slots=True)
+class Storyboard:
+    title: str
+    language: str
+    segments: list[StoryboardSegment]
+
+
+@dataclass(slots=True)
+class StoryboardPlanResult:
+    raw_content: str
+    storyboard: Storyboard
+
+
+@dataclass(slots=True)
 class AppPreferences:
     output_dir: str = "outputs"
-    auto_render: bool = False
+
+
+@dataclass(slots=True)
+class TtsConfig:
+    api_key: str
+    model: str
+    voice: str
+
+
+@dataclass(slots=True)
+class AudioBeatResult:
+    segment_id: str
+    beat_id: str
+    title: str
+    text: str
+    audio_path: str
+    duration_seconds: float
 
 
 @dataclass(slots=True)

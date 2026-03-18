@@ -1,25 +1,42 @@
 # Algorithm Video Generator
 
-一个最小可运行的 Python GUI 工具：
+把 ACM 题目材料生成为讲解视频。
 
-- 输入 ACM 题目、标准题解、`std` 代码
-- 通过 OpenAI Chat Completions 兼容接口生成 `Manim` 脚本
-- 使用 SSE 流式显示生成过程
-- 自动保存脚本
-- 可选自动调用 `manim` 渲染视频
+一次完整生成流程是：
 
-当前版本先不做配音，只完成“AI 生成 Manim 脚本 + 本地渲染”。
+1. 用 OpenAI 兼容接口规划分镜。
+2. 把分镜拆成 beat 级短句。
+3. 用阿里云千问 TTS 逐句合成配音。
+4. 生成 `Manim` 脚本并渲染视频。
+5. 用 `ffmpeg` 把音频和视频合成最终成品。
 
-## 技术选型
+## 使用步骤
 
-- Python 3.12+
-- GUI: `Flet`
-- LLM 请求: 官方 `openai` Python SDK
-- 动画渲染: `manim`（可选依赖）
+1. 安装 Python 3.12。
+2. 安装 `ffmpeg`，并确认 `ffmpeg`、`ffprobe` 在 `PATH` 里。
+3. 创建虚拟环境并安装项目依赖。
+4. 新建 `.env`，填好 LLM 和阿里云 TTS 的 Key。
+5. 启动服务。
+6. 调 `POST /generate`，等待输出视频。
 
-## 安装
+下面是完整步骤。
 
-推荐先建虚拟环境再安装：
+## 1. 环境要求
+
+必须具备：
+
+- Python `3.12+`
+- `ffmpeg`
+- `ffprobe`
+
+说明：
+
+- `manim` 已经在 Python 依赖里，会跟随 `pip install -e .` 一起安装。
+- 如果你的系统安装 `manim` 失败，那不是本项目逻辑问题，而是你的机器缺少 Manim 运行所需的底层环境。先把 Manim Community 本身装通，再回来装本项目。
+
+## 2. 安装项目
+
+在项目根目录执行：
 
 ```bash
 python -m venv .venv
@@ -28,176 +45,185 @@ python -m pip install --upgrade pip
 python -m pip install -e .
 ```
 
-如果需要本地渲染视频，再安装 `manim` 依赖：
+Windows PowerShell 可以这样激活虚拟环境：
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+## 3. 检查外部命令
+
+先确认这些命令可用：
 
 ```bash
-python -m pip install -e ".[render]"
+python --version
+ffmpeg -version
+ffprobe -version
 ```
 
-说明：
+## 4. 配置 `.env`
 
-- `manim` 在不同平台可能还需要系统级依赖。
-- `Flet` 官方文档要求桌面端使用 Python 3.10+，并支持 Windows 10/11。
-- 如果开启“自动渲染视频”，还需要本地可用的 `manim`。
+先复制模板：
 
-## 安装 LaTeX 环境
-
-如果脚本里会用到 `Tex`、`MathTex`、`BulletedList`、`Title` 等基于 LaTeX 的 Manim 组件，还需要额外安装 LaTeX 工具链。
-
-Manim 官方文档将 LaTeX 视为可选依赖；在 Windows 上，官方推荐使用 [MiKTeX](https://miktex.org/download)。
-
-### Windows（推荐）
-
-1. 下载并安装 [MiKTeX](https://miktex.org/download)。
-2. 安装完成后打开 `MiKTeX Console`，先执行一次更新。
-3. 在 `Settings` 中把缺失宏包安装策略设置为 `Ask me first` 或 `Always`。
-4. 重新打开一个 PowerShell 窗口，确认命令已经进入 `PATH`：
-
-```powershell
-where latex
-where xelatex
-where dvisvgm
+```bash
+cp .env.example .env
 ```
 
-至少应当能找到：
+最少要填这 6 个变量：
 
-- `latex`：默认 `Tex` / `MathTex` / `BulletedList` 会用到。
-- `dvisvgm`：Manim 需要它把 LaTeX 输出转换成 SVG。
-- `xelatex`：如果你要在 LaTeX 里直接排中文，通常还需要它。
+```env
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_API_KEY=your_openai_or_compatible_key
+OPENAI_MODEL=gpt-5
 
-### macOS / Linux
-
-- macOS：可按 Manim 官方建议安装 [MacTeX](https://www.tug.org/mactex/)。
-- Linux：通常安装 TeX Live；Manim 官方示例给出的完整安装方式是 Debian/Ubuntu 使用 `texlive-full`，Fedora 使用 `texlive-scheme-full`。
-
-### 验证是否可用
-
-安装完成后，建议先用命令行验证：
-
-```powershell
-where latex
-where xelatex
-where dvisvgm
+DASHSCOPE_API_KEY=your_dashscope_key
+TTS_MODEL=qwen3-tts-instruct-flash
+TTS_VOICE=Serena
 ```
 
-如果这些命令都能返回路径，再运行一个最小示例：
+如果你还想改服务监听地址或输出目录，可以额外配置：
 
-```python
-from manim import *
-
-class AlgorithmVideo(Scene):
-    def construct(self):
-        self.add(MathTex(r"x^2 + y^2 = z^2"))
+```env
+APP_HOST=127.0.0.1
+APP_PORT=8000
+APP_RELOAD=false
+OPENAI_TEMPERATURE=0.2
+OPENAI_TIMEOUT_SECONDS=180
+APP_OUTPUT_DIR=outputs
 ```
 
-然后执行：
+## 5. 启动服务
 
-```powershell
-manim render .\demo.py AlgorithmVideo
+推荐直接用包入口：
+
+```bash
+python -m algorithm_video_generator
 ```
 
-### 中文 LaTeX 说明
-
-如果只是显示中文说明文字，优先使用 `Text` 或 `Paragraph`，这比 LaTeX 更稳。
-
-如果确实要在 `Tex`、`BulletedList` 中直接渲染中文，通常需要在脚本里改用 `xelatex` 模板，并启用 `xeCJK`。否则即使已经装了普通 LaTeX，也可能在中文文本上失败。
-
-```python
-from manim import *
-from manim.utils.tex import TexTemplate
-
-zh_tex = TexTemplate(tex_compiler="xelatex", output_format=".xdv")
-zh_tex.add_to_preamble(r"\usepackage{xeCJK}")
-zh_tex.add_to_preamble(r"\setCJKmainfont{Microsoft YaHei}")
-```
-
-更多背景可参考：
-
-- [Manim 安装文档](https://docs.manim.community/en/stable/installation/uv.html)
-- [MiKTeX Windows 安装说明](https://miktex.org/howto/install-miktex)
-
-## 启动
+也可以：
 
 ```bash
 algorithm-video-generator
 ```
 
-或者：
-
-```bash
-python -m algorithm_video_generator
-```
-
-或者：
-
-```bash
-flet run main.py
-```
-
-## 使用流程
-
-1. 在“题目与题解”里粘贴题目、标准题解、标准代码
-2. 在“隐藏设置”里填好 API Base URL、API Key、模型名
-3. 点击唯一主按钮“开始生成”
-4. 右侧实时查看流式日志和生成中的脚本
-5. 生成完成后脚本会自动保存到 `outputs/scripts/`
-
-默认输出目录为项目下的 `outputs/`，设置会保存到 `storage/app_state.json`。
-
-## OpenAI 兼容接口要求
-
-默认基础地址示例：
+启动后访问：
 
 ```text
-https://api.openai.com/v1
+http://127.0.0.1:8000/docs
 ```
 
-接口要求：
+如果你改了 `APP_HOST` 或 `APP_PORT`，这里对应修改。
 
-- 兼容 `POST /chat/completions`
-- 支持 `stream: true`
-- 使用标准 SSE 流返回 `data: ...`
+## 6. 发起一次生成
 
-当前实现基于官方 `openai` Python SDK 的 `base_url` 自定义能力和 SSE 流式能力。
+最简单的方式是直接打开 Swagger：
 
-## 当前范围
+```text
+http://127.0.0.1:8000/docs
+```
 
-这个基础版本只做以下事情：
+然后调用 `POST /generate`。
 
-- 把题目材料整理成适合视频化展示的 Manim 脚本
-- 支持单按钮 GUI、进度条、流式日志
-- 自动保存脚本
-- 可选本地调用 `manim` 渲染
+请求体示例：
 
-暂时不做：
+```json
+{
+  "title": "CF 123A - Prime Permutation",
+  "language": "中文",
+  "problem_statement": "题目描述",
+  "official_solution": "标准题解",
+  "reference_code": "int main() { return 0; }",
+  "additional_requirements": "突出样例推演"
+}
+```
 
-- TTS 配音
-- 自动分镜优化
-- 多场景模板管理
-- 任务队列与批处理
-
-## 测试
+也可以直接用 `curl`：
 
 ```bash
-.venv/bin/python -m unittest discover -s tests
+curl -X POST "http://127.0.0.1:8000/generate" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "CF 123A - Prime Permutation",
+    "language": "中文",
+    "problem_statement": "题目描述",
+    "official_solution": "标准题解",
+    "reference_code": "int main() { return 0; }",
+    "additional_requirements": "突出样例推演"
+  }'
 ```
 
-## Windows 启动
+## 7. 生成结果
 
-在项目根目录打开 PowerShell：
+每次任务都会输出到：
 
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -e .
-python -m algorithm_video_generator
+```text
+outputs/jobs/<job_id>/
 ```
 
-也可以用 Flet 官方推荐方式：
+目录：
 
-```powershell
-flet run main.py
+- `storyboard/`：结构化分镜 JSON
+- `script/`：生成后的 Manim 脚本
+- `audio/`：逐 beat 音频和合并音频
+- `media/`：Manim 原始渲染结果
+- `final/`：最终成品视频
+
+最终视频在：
+
+```text
+outputs/jobs/<job_id>/final/
 ```
 
+## 8. 常见报错
 
+### `未检测到 ffmpeg`
+
+你没装 FFmpeg，或者没把 `ffmpeg`、`ffprobe` 放进 `PATH`。
+
+### `未检测到 manim`
+
+当前 Python 环境里没有装好 `manim`。重新确认你是在项目虚拟环境里执行，并且 `pip install -e .` 成功。
+
+### TTS 400 / TTS 请求失败
+
+优先检查这几件事：
+
+- `DASHSCOPE_API_KEY` 是否正确
+- `TTS_MODEL` 和 `TTS_VOICE` 是否是阿里云支持的组合
+- 你的 Key 是否对应正确地域
+
+### `POST /generate` 很慢
+
+这是正常现象。一次生成要经过：
+
+1. 分镜规划
+2. 多次 TTS
+3. Manim 渲染
+4. FFmpeg 合成
+
+真正最耗时的通常是 TTS 和 Manim 渲染。
+
+## 9. 接口概览
+
+可用接口：
+
+- `GET /health`
+- `GET /config`
+- `POST /generate`
+
+`/config` 只会告诉你 API Key 是否配置，不会把 Key 原文返回出来。
+
+## 10. 项目结构
+
+```text
+src/algorithm_video_generator/
+  api/         # FastAPI 入口、路由、schemas
+  core/        # .env 配置
+  models/      # 领域模型
+  services/    # 生成主流程
+  tts/         # 阿里云 TTS 与音频处理
+  llm.py
+  manim_tools.py
+  prompts.py
+  utils.py
+```

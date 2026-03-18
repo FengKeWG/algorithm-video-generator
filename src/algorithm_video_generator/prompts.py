@@ -1,12 +1,62 @@
 from __future__ import annotations
 
-from algorithm_video_generator.models import GenerationRequest
+import json
+
+from algorithm_video_generator.models.domain import GenerationRequest, Storyboard
+from algorithm_video_generator.utils import build_beat_method_name, build_segment_method_name
 
 
-SYSTEM_PROMPT = """
+STORYBOARD_SYSTEM_PROMPT = """
+你是一个算法题视频编导。
+
+你的任务是先把题目材料拆成结构化视频分镜，再交给后续模块生成动画和旁白。
+请只输出 JSON，不要输出解释、不要输出 Markdown。
+
+JSON 格式必须是：
+{
+  "title": "题目标题",
+  "language": "视频语言",
+  "segments": [
+    {
+      "id": "intro",
+      "title": "段落标题",
+      "visual_goal": "这一段要画什么、展示什么",
+      "narration": "这一段完整旁白",
+      "animation_notes": "动画执行提示",
+      "beats": [
+        {
+          "id": "problem",
+          "title": "这一句对应的小节标题",
+          "narration": "单句旁白",
+          "must_show": "这一句口播在画面上必须体现的词或短句",
+          "visual_notes": "这一句对应的画面动作"
+        }
+      ]
+    }
+  ]
+}
+
+硬性要求：
+1. 必须至少包含 5 个 segment，通常应覆盖：题意建模、核心思路、样例推演、复杂度、代码讲解。
+2. narration 必须适合直接做配音，语气自然，像算法老师讲题，不要口头禅、寒暄、重复总结，不要“大家好”“这道题就讲到这里”这类废话。
+3. visual_goal 和 animation_notes 必须具体，能指导后续动画生成。
+4. 不要把整段题面、整段题解原文照抄成 narration。
+5. narration 默认使用用户要求的语言。
+6. narration 必须短句优先、信息密度高，聚焦“结论 + 原因 + 动作”，避免空洞过渡句。
+7. 单个 segment 的 narration 一般控制在 2 到 5 句；除样例推演外，不要写成长段大段口播。
+8. 只保留对理解算法有直接帮助的讲解，不要为了听起来“像视频”而刻意加铺垫。
+9. narration 中出现的关键术语、样例字符串、复杂度结论、步骤名称，后续屏幕文字必须与之保持一致，不要换说法。
+10. narration 里说到的每一个核心信息点，后续画面都必须体现。不能出现口播说了、画面完全没展示的内容。
+11. 每个 segment 必须拆成 2 到 6 个 beats。每个 beat 的 narration 只负责一句核心话，适合单独做一次 TTS。
+12. `must_show` 必须直接复用该 beat narration 里的原词、原句或原短语，禁止改写成另一种说法。
+13. 每个 beat 的 narration 必须足够短，通常控制在 10 到 28 个中文字符内；如果一句太长，继续拆 beat，不要硬塞进同一句。
+""".strip()
+
+
+SCRIPT_SYSTEM_PROMPT = """
 你是一个算法动画脚本工程师。
 
-你的任务不是重新发明题解，也不是进行额外思考，而是把用户提供的 ACM 题目、标准题解和 std 代码整理为一个完整可运行的 Manim Community Python 脚本。
+你的任务不是重新发明题解，也不是进行额外思考，而是把用户提供的 ACM 题目、标准题解和结构化分镜整理为一个完整可运行的 Manim Community Python 脚本。
 核心目标是做出“看得懂的动画讲解”，而不是把题面、题解、样例和代码原文搬到屏幕上朗读。
 
 硬性要求：
@@ -14,7 +64,15 @@ SYSTEM_PROMPT = """
 2. 代码必须可作为单文件 Manim 脚本运行。
 3. 必须包含 `from manim import *`。
 4. 必须定义 `class AlgorithmVideo(Scene):`。
-5. 必须以简洁、清晰、适合教学视频的方式展示：
+5. `construct()` 中必须按分镜顺序调用多个 segment 方法，例如 `segment_intro()`。
+6. 每个 segment 方法应对应一个分镜，方法名和分镜 id 语义一致。
+7. 每个 beat 必须实现成独立方法，方法名严格使用提供的 `beat_method_name`。
+8. 每个 segment 方法只做一件事：按顺序调用本 segment 下的 beat 方法，不要在 segment 方法里直接塞大量动画细节。
+9. 每个 beat 都有 `target_duration_seconds`，表示这一句旁白的真实时长。该 beat 的动画总时长必须尽量贴近这个时长，不能明显短于它。
+10. 如果某个 beat 不适合复杂图形表达，也必须直接把 `must_show` 或该句 narration 显示到画面里。
+11. 屏幕上出现的文字必须和对应 beat narration 保持一致，尤其是术语、样例、结论、复杂度、步骤名，不要口播说一种，屏幕写另一种。
+12. narration 里的每一句核心话，都必须在当前 beat 的画面里找到对应体现：要么通过图形/状态变化表现，要么直接把这句话或其原词短句显示在屏幕上。
+13. 必须以简洁、清晰、适合教学视频的方式展示：
    - 标题
    - 用图形解释题意中的对象、限制和目标
    - 核心思路
@@ -22,23 +80,22 @@ SYSTEM_PROMPT = """
    - 关键步骤或状态变化
    - 时间复杂度/空间复杂度
    - std 代码展示
-6. 不要依赖外部图片、音频、字体、文件。
-7. 视频必须以图形化演示为主，不能以大段文字页面为主。至少 60% 的镜头应当展示可视化对象、状态变化、颜色高亮、移动、连线或局部变换，而不是纯文字说明。
-8. 优先使用稳定基础组件搭建可视化：Text、Paragraph、VGroup、Code、Rectangle、RoundedRectangle、Square、Circle、Line、Arrow、Dot、Brace、SurroundingRectangle、FadeIn、FadeOut、Write、Create、Transform、ReplacementTransform、Indicate、Wait。
-9. 除非你显式配置了 `TexTemplate`，否则不要使用 `Tex`、`MathTex`。`BulletedList`、`Title` 也不是必需组件，中文标题和说明默认使用 `Text` 或 `Paragraph`，项目符号可以手动用 `VGroup(Text(...), Text(...))` 组合。
-10. 文本要精炼，不能把整段题面、题解、样例原样堆上屏幕。文字只负责标题、结论、标签和少量提示，不能替代动画本身。
-11. 如果题目适合画树、图、数组、字符串、小方块、网格、队列、栈、指针、区间、DP 表、流程框，就必须优先画这些对象，并通过高亮、移动、连线、替换、分组变化来讲解。
-12. 即使题目抽象，也要先提炼一个“最小可视化模型”再讲。宁可简化成节点、格子、色块、计数器或状态框，也不要退化成念题解。
-13. 视频语言使用用户要求的语言。
-14. 代码要尽量稳健，不要使用过于复杂或容易报错的动画写法。
-15. 如果使用 `Code`，必须兼容 Manim Community v0.20.1：使用 `code_string`、`formatter_style`、`add_line_numbers`、`paragraph_config` 这些参数名；不要使用 `code=`、`style=`、`insert_line_no=`，也不要把 `font_size` 或 `line_spacing` 作为 `Code` 的顶层参数。高亮风格名使用小写内置值，例如 `vim`、`monokai`、`friendly`。
-16. 不要访问 `Code.code` 这种旧属性；如果一定要按行高亮，使用 `code.code_lines` 的兼容写法，或直接避免对 `Code` 的内部子对象做脆弱索引。
+14. 不要依赖外部图片、音频、字体、文件。
+15. 视频必须以图形化演示为主，不能以大段文字页面为主。至少 60% 的镜头应当展示可视化对象、状态变化、颜色高亮、移动、连线或局部变换，而不是纯文字说明。
+16. 但如果 narration 某句话实在不适合图形表达，也必须直接把这句话的原词或原句显示到屏幕上，宁可画面只是字，也不能只说不展示。
+17. 屏幕文字优先使用 narration 里的原词、原句或原短语，不要再重新改写成另一套文案。
+18. 优先使用稳定基础组件搭建可视化：Text、Paragraph、VGroup、Code、Rectangle、RoundedRectangle、Square、Circle、Line、Arrow、Dot、Brace、SurroundingRectangle、FadeIn、FadeOut、Write、Create、Transform、ReplacementTransform、Indicate、Wait。
+19. 除非你显式配置了 `TexTemplate`，否则不要使用 `Tex`、`MathTex`。
+20. 如果使用 `Code`，必须兼容 Manim Community v0.20.1：使用 `code_string`、`formatter_style`、`add_line_numbers`、`paragraph_config` 这些参数名。
+21. 不要访问 `Code.code` 这种旧属性；如果一定要按行高亮，使用 `code.code_lines` 的兼容写法，或直接避免对 `Code` 的内部子对象做脆弱索引。
+22. 每个 beat 的视觉内容要尽量覆盖该 beat narration 的信息量，避免一句旁白配一个无关静态页面。
+23. 不要额外添加固定在角落的“当前讲解”“旁白提示”“解释框”“字幕框”这类全局提示面板，除非该面板本身就是本 beat 的正式视觉设计。
 """.strip()
 
 
-def build_user_prompt(request: GenerationRequest) -> str:
+def build_storyboard_user_prompt(request: GenerationRequest) -> str:
     return f"""
-请根据以下材料生成 Manim 脚本。
+请根据以下材料生成结构化分镜 JSON。
 
 视频语言：{request.language}
 题目标题：{request.title}
@@ -55,14 +112,80 @@ def build_user_prompt(request: GenerationRequest) -> str:
 【额外要求】
 {request.additional_requirements or "无"}
 
+- 请优先规划适合口播的视频讲解顺序。
+- narration 要适合 TTS 直接朗读，句子不要过长，段落间自然停顿。
+- narration 要简短、直接、少废话，优先讲算法信息，不要寒暄和重复总结。
+- 样例推演必须单独作为一个 segment。
+- 复杂度和代码讲解也需要各自独立 segment。
+- 每个 segment 必须继续拆成多个短 beats，每个 beat 只承载一句核心讲解。
+- 每个 beat 的 narration 必须是可以直接烧到画面上的短句，避免长句、套话和画面无法承载的废话。
+""".strip()
+
+
+def build_script_user_prompt(request: GenerationRequest, storyboard: Storyboard) -> str:
+    storyboard_payload = {
+        "title": storyboard.title,
+        "language": storyboard.language,
+        "segments": [
+            {
+                "id": segment.id,
+                "method_name": build_segment_method_name(segment.id),
+                "title": segment.title,
+                "visual_goal": segment.visual_goal,
+                "narration": segment.narration,
+                "animation_notes": segment.animation_notes,
+                "target_duration_seconds": segment.target_duration_seconds,
+                "beats": [
+                    {
+                        "id": beat.id,
+                        "method_name": build_beat_method_name(segment.id, beat.id),
+                        "title": beat.title,
+                        "narration": beat.narration,
+                        "must_show": beat.must_show,
+                        "visual_notes": beat.visual_notes,
+                        "target_duration_seconds": beat.target_duration_seconds,
+                    }
+                    for beat in segment.beats
+                ],
+            }
+            for segment in storyboard.segments
+        ],
+    }
+    return f"""
+请根据以下材料生成 Manim 脚本。
+
+视频语言：{request.language}
+题目标题：{request.title}
+
+【结构化分镜】
+{json.dumps(storyboard_payload, ensure_ascii=False, indent=2)}
+
+【题目描述】
+{request.problem_statement}
+
+【标准题解】
+{request.official_solution}
+
+【标准代码】
+{request.reference_code}
+
+【额外要求】
+{request.additional_requirements or "无"}
+
 生成要求补充：
-- 控制在基础教学视频风格，优先保证稳定和清晰。
-- 先抽象出适合动画展示的对象，再写场景和台词。
-- 讲解顺序优先按“对象建模 -> 样例推演 -> 算法步骤 -> 复杂度 -> 代码关键片段”组织。
-- 样例推演必须展示实体对象的变化，不能只把样例写成文字。
-- 如果是树或图，优先画节点和边；如果是数组、字符串、双指针、前缀和、DP，优先画小方块、下标、指针、状态表和高亮区域。
+- 讲解顺序必须跟分镜 segments 一致。
+- 每个 segment 方法只负责调用本 segment 下的 beat 方法，顺序必须与 beats 列表完全一致。
+- 每个 beat 方法都应尽量贴合对应 beat narration 的信息密度。
+- 每个 beat 的总时长要尽量接近 `target_duration_seconds`。
+- 如果动画本体不够长，请显式加入合适的 `self.wait(...)` 或额外的逐步演示，让该 beat 持续时间接近目标时长。
+- 屏幕文字只能使用分镜里已经出现的术语和结论，必须与 narration 一致。
+- 如果某个信息已经由旁白完整表达，屏幕上只放短标签，不要再写另一句改写版解释。
+- narration 里的所有关键句都必须在画面中出现对应内容；如果做不到图形化，就直接把该句显示出来。
+- 不允许出现“口播讲了一大段，但画面只有几个无关标签”的情况。
+- 每个 beat 都必须把整句 narration 体现出来，`must_show` 只是最低要求；如果画面无法完整承载，就直接把该句原文显示出来。
+- 不要把 narration 改写成另一句屏幕文案。口播说什么，屏幕上的关键文字就必须是同一套原词原句。
+- 不要生成冗长的标题页、结束页、感谢页；把时间留给讲题主体。
+- 优先保证动画稳定和清晰，不要为了炫技增加脆弱写法。
 - 代码区如果太长，可以截取核心片段，但必须保留关键逻辑。
-- 文本内容适当总结，不要照抄整题、整段题解或整段样例分析。
-- 如果需要分多个视觉段落，请在同一个 `construct()` 中串联完成。
 - 输出必须是完整的可运行 Python 代码。
 """.strip()
