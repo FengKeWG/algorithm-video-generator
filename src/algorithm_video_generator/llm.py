@@ -19,8 +19,10 @@ from algorithm_video_generator.models.domain import (
 )
 from algorithm_video_generator.prompts import (
     SCRIPT_SYSTEM_PROMPT,
+    STORYBOARD_REPAIR_SYSTEM_PROMPT,
     STORYBOARD_SYSTEM_PROMPT,
     build_script_user_prompt,
+    build_storyboard_repair_user_prompt,
     build_storyboard_user_prompt,
 )
 from algorithm_video_generator.utils import (
@@ -54,7 +56,17 @@ class ChatCompletionsClient:
             system_prompt=STORYBOARD_SYSTEM_PROMPT,
             user_prompt=build_storyboard_user_prompt(request),
         )
-        storyboard = self._parse_storyboard(raw_content, request)
+        try:
+            storyboard = self._parse_storyboard(raw_content, request)
+        except ValueError as exc:
+            if on_status:
+                on_status("分镜 JSON 非法，正在请求模型修复格式...")
+            repaired_content = self._create_completion_text(
+                system_prompt=STORYBOARD_REPAIR_SYSTEM_PROMPT,
+                user_prompt=build_storyboard_repair_user_prompt(raw_content, str(exc)),
+            )
+            storyboard = self._parse_storyboard(repaired_content, request)
+            raw_content = repaired_content
         if on_status:
             on_status("分镜规划完成。")
         return StoryboardPlanResult(raw_content=raw_content, storyboard=storyboard)

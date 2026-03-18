@@ -6,35 +6,76 @@ from algorithm_video_generator.models.domain import GenerationRequest, Storyboar
 from algorithm_video_generator.utils import build_beat_method_name, build_segment_method_name
 
 
-STORYBOARD_SYSTEM_PROMPT = """
+STORYBOARD_JSON_EXAMPLE = json.dumps(
+    {
+        "title": "示例题目",
+        "language": "中文",
+        "segments": [
+            {
+                "id": "intro",
+                "title": "题意建模",
+                "visual_goal": "展示字符串 abc，依次删除一个字符。",
+                "narration": "删除一个字符，让剩余字符串字典序最小。",
+                "animation_notes": "先显示原串，再展示删除结果。",
+                "beats": [
+                    {
+                        "id": "goal",
+                        "title": "目标",
+                        "narration": "删除一个字符。",
+                        "must_show": "删除一个字符",
+                        "visual_notes": "高亮被删除的位置。",
+                    },
+                    {
+                        "id": "result",
+                        "title": "结果",
+                        "narration": "让剩余字符串字典序最小。",
+                        "must_show": "字典序最小",
+                        "visual_notes": "对比几个候选结果。",
+                    },
+                ],
+            }
+        ],
+    },
+    ensure_ascii=False,
+    indent=2,
+)
+
+
+STORYBOARD_SYSTEM_PROMPT = f"""
 你是一个算法题视频编导。
 
 你的任务是先把题目材料拆成结构化视频分镜，再交给后续模块生成动画和旁白。
-请只输出 JSON，不要输出解释、不要输出 Markdown。
+你唯一允许输出的内容是一个合法 JSON 对象。
+不要输出解释、不要输出 Markdown、不要输出代码块、不要输出 JSON 前后的任何文字。
+输出的第一个字符必须是 `{{`，最后一个字符必须是 `}}`。
 
 JSON 格式必须是：
-{
+{{
   "title": "题目标题",
   "language": "视频语言",
   "segments": [
-    {
+    {{
       "id": "intro",
       "title": "段落标题",
       "visual_goal": "这一段要画什么、展示什么",
       "narration": "这一段完整旁白",
       "animation_notes": "动画执行提示",
       "beats": [
-        {
+        {{
           "id": "problem",
           "title": "这一句对应的小节标题",
           "narration": "单句旁白",
           "must_show": "这一句口播在画面上必须体现的词或短句",
           "visual_notes": "这一句对应的画面动作"
-        }
+        }}
       ]
-    }
+    }}
   ]
-}
+}}
+
+下面是合法 JSON 示例。
+注意：示例只演示结构，不演示完整段数；你实际输出时仍然必须至少包含 5 个 segments。
+{STORYBOARD_JSON_EXAMPLE}
 
 硬性要求：
 1. 必须至少包含 5 个 segment，通常应覆盖：题意建模、核心思路、样例推演、复杂度、代码讲解。
@@ -50,6 +91,26 @@ JSON 格式必须是：
 11. 每个 segment 必须拆成 2 到 6 个 beats。每个 beat 的 narration 只负责一句核心话，适合单独做一次 TTS。
 12. `must_show` 必须直接复用该 beat narration 里的原词、原句或原短语，禁止改写成另一种说法。
 13. 每个 beat 的 narration 必须足够短，通常控制在 10 到 28 个中文字符内；如果一句太长，继续拆 beat，不要硬塞进同一句。
+14. 所有 key 和所有字符串都必须使用双引号 `"`，不能使用单引号。
+15. JSON 中禁止尾逗号、禁止注释、禁止 `...`、禁止多余说明。
+16. 如果字符串内容里需要双引号，必须转义为 `\\"`。
+17. 输出前先自行检查一次：结果必须能被 Python `json.loads(...)` 直接解析。
+""".strip()
+
+
+STORYBOARD_REPAIR_SYSTEM_PROMPT = """
+你是一个 JSON 修复器。
+
+你的唯一任务是把用户提供的内容修复成一个合法 JSON 对象。
+只允许输出修复后的 JSON 对象本身。
+不要解释，不要 Markdown，不要代码块，不要任何前后缀文字。
+
+硬性要求：
+1. 保留原有字段语义，不要擅自删除 `title`、`language`、`segments`、`beats` 等关键字段。
+2. 所有 key 和字符串都必须使用双引号。
+3. 删除尾逗号、注释、无效前后缀。
+4. 如果字符串内部出现双引号，必须正确转义。
+5. 输出必须能被 Python `json.loads(...)` 直接解析。
 """.strip()
 
 
@@ -119,6 +180,23 @@ def build_storyboard_user_prompt(request: GenerationRequest) -> str:
 - 复杂度和代码讲解也需要各自独立 segment。
 - 每个 segment 必须继续拆成多个短 beats，每个 beat 只承载一句核心讲解。
 - 每个 beat 的 narration 必须是可以直接烧到画面上的短句，避免长句、套话和画面无法承载的废话。
+- 最终输出必须是一个能直接 `json.loads(...)` 的 JSON 对象。
+- 不要在 JSON 前后添加任何解释。
+""".strip()
+
+
+def build_storyboard_repair_user_prompt(raw_content: str, error_message: str) -> str:
+    return f"""
+下面这段内容本来应该是分镜 JSON，但它不是合法 JSON。
+
+解析错误：
+{error_message}
+
+请你在尽量保留原意的前提下，把它修复为合法 JSON。
+只输出修复后的 JSON 对象，不要输出解释。
+
+原始内容如下：
+{raw_content}
 """.strip()
 
 
