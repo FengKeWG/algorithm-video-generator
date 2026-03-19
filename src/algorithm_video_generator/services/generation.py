@@ -267,7 +267,7 @@ class AlgorithmVideoGeneratorService:
             request_language: str,
             append_log: Callable[[str], None],
     ) -> list[AudioBeatResult]:
-        append_log("开始合成旁白音频（beat 级）...")
+        append_log("开始合成旁白音频...")
         audio_dir = job_dir / "audio" / "beats"
         audio_dir.mkdir(parents=True, exist_ok=True)
 
