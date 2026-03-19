@@ -18,9 +18,11 @@ from algorithm_video_generator.models.domain import (
     StoryboardSegment,
 )
 from algorithm_video_generator.prompts import (
+    SCRIPT_REPAIR_SYSTEM_PROMPT,
     SCRIPT_SYSTEM_PROMPT,
     STORYBOARD_REPAIR_SYSTEM_PROMPT,
     STORYBOARD_SYSTEM_PROMPT,
+    build_script_repair_user_prompt,
     build_script_user_prompt,
     build_storyboard_repair_user_prompt,
     build_storyboard_user_prompt,
@@ -33,6 +35,7 @@ from algorithm_video_generator.utils import (
     repair_manim_code,
     slugify_filename,
     split_narration_into_beats,
+    validate_storyboard_script_structure,
 )
 
 StatusCallback = Callable[[str], None]
@@ -141,8 +144,32 @@ class ChatCompletionsClient:
         if not raw_content:
             raise ValueError("SSE 已结束，但没有收到有效文本内容。")
 
-        manim_code = repair_manim_code(extract_python_code(raw_content))
-        self._validate_generated_code(manim_code)
+        manim_code = self._prepare_manim_code(raw_content)
+        issues = self._collect_script_issues(manim_code, storyboard)
+        if issues:
+            if on_debug:
+                for issue in issues:
+                    on_debug(f"[初次脚本问题] {issue}")
+            if on_status:
+                on_status("模型脚本存在语法或结构问题，正在请求修复...")
+            repaired_raw_content = self._create_completion_text(
+                system_prompt=SCRIPT_REPAIR_SYSTEM_PROMPT,
+                user_prompt=build_script_repair_user_prompt(request, storyboard, raw_content, issues),
+            )
+            repaired_code = self._prepare_manim_code(repaired_raw_content)
+            repaired_issues = self._collect_script_issues(repaired_code, storyboard)
+            if not repaired_issues:
+                if on_status:
+                    on_status("脚本修复完成。")
+                raw_content = repaired_raw_content
+                manim_code = repaired_code
+            else:
+                if on_debug:
+                    for issue in repaired_issues:
+                        on_debug(f"[修复后脚本问题] {issue}")
+                raw_content = repaired_raw_content
+                manim_code = repaired_code
+
         return GenerationResult(raw_content=raw_content, manim_code=manim_code)
 
     def _create_completion_text(self, system_prompt: str, user_prompt: str) -> str:
@@ -211,6 +238,20 @@ class ChatCompletionsClient:
     def _validate_generated_code(manim_code: str) -> None:
         if not has_required_manim_markers(manim_code):
             raise ValueError("模型返回内容里没有找到完整的 Manim 入口骨架。")
+
+    @staticmethod
+    def _prepare_manim_code(raw_content: str) -> str:
+        return repair_manim_code(extract_python_code(raw_content))
+
+    @staticmethod
+    def _collect_script_issues(manim_code: str, storyboard: Storyboard) -> list[str]:
+        issues: list[str] = []
+        if not has_required_manim_markers(manim_code):
+            issues.append("模型返回内容里没有找到完整的 Manim 入口骨架。")
+        valid, structure_issues = validate_storyboard_script_structure(manim_code, storyboard)
+        if not valid:
+            issues.extend(structure_issues)
+        return issues
 
     @staticmethod
     def _parse_storyboard(raw_content: str, request: GenerationRequest) -> Storyboard:

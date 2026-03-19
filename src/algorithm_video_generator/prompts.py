@@ -135,9 +135,9 @@ SCRIPT_SYSTEM_PROMPT = """
 7. 每个 beat 必须实现成独立方法，方法名严格使用提供的 `beat_method_name`。
 8. 每个 segment 方法只做一件事：按顺序调用本 segment 下的 beat 方法，不要在 segment 方法里直接塞大量动画细节。
 9. 每个 beat 都有 `target_duration_seconds`，表示这一句旁白的真实时长。该 beat 的动画总时长必须尽量贴近这个时长，不能明显短于它。
-10. 如果某个 beat 不适合复杂图形表达，也必须直接把 `must_show` 或该句 narration 显示到画面里。
-11. 屏幕上出现的文字必须和对应 beat narration 保持一致，尤其是术语、样例、结论、复杂度、步骤名，不要口播说一种，屏幕写另一种。
-12. narration 里的每一句核心话，都必须在当前 beat 的画面里找到对应体现：要么通过图形/状态变化表现，要么直接把这句话或其原词短句显示在屏幕上。
+10. 如果某个 beat 不适合复杂图形表达，也至少要把 `must_show` 里的关键词、关键状态、结论或短语展示到画面里，不要完全靠口播。
+11. 屏幕上出现的术语、样例、结论、复杂度、步骤名必须和对应 beat narration 保持一致，但屏幕文字应以关键词、标签、状态名、结果为主，不要把整句旁白机械搬到屏幕上。
+12. narration 里的核心信息必须在当前 beat 的画面中被看见：优先通过图形、状态变化、对照和样例推演来表达；只有图形实在承载不了时，才补充短句文字。
 13. 必须以简洁、清晰、适合教学视频的方式展示：
    - 标题
    - 用图形解释题意中的对象、限制和目标
@@ -148,8 +148,8 @@ SCRIPT_SYSTEM_PROMPT = """
    - std 代码展示
 14. 不要依赖外部图片、音频、字体、文件。
 15. 视频必须以图形化演示为主，不能以大段文字页面为主。至少 60% 的镜头应当展示可视化对象、状态变化、颜色高亮、移动、连线或局部变换，而不是纯文字说明。
-16. 但如果 narration 某句话实在不适合图形表达，也必须直接把这句话的原词或原句显示到屏幕上，宁可画面只是字，也不能只说不展示。
-17. 屏幕文字优先使用 narration 里的原词、原句或原短语，不要再重新改写成另一套文案。
+16. 如果 narration 某句话实在不适合图形表达，可以补一个短句、标签或结论，但不要默认整句铺满屏幕。
+17. 屏幕文字优先使用 narration 里的原词或原短语，不要再重新改写成另一套文案，也不要把整段旁白变成长字幕。
 18. 优先使用稳定基础组件搭建可视化：Text、Paragraph、VGroup、Code、Rectangle、RoundedRectangle、Square、Circle、Line、Arrow、Dot、Brace、SurroundingRectangle、FadeIn、FadeOut、Write、Create、Transform、ReplacementTransform、Indicate、Wait。
 19. 除非你显式配置了 `TexTemplate`，否则不要使用 `Tex`、`MathTex`。
 20. 如果使用 `Code`，必须兼容 Manim Community v0.20.1：使用 `code_string`、`formatter_style`、`add_line_numbers`、`paragraph_config` 这些参数名。
@@ -163,6 +163,26 @@ SCRIPT_SYSTEM_PROMPT = """
 28. 整个脚本默认要遵循用户提供的【标准题解】作为主线。可以补充推导、拆步骤、补边界条件和实现细节，但不要擅自换成另一种不同的核心算法。
 29. “理解题面/题意建模” 对应的 segment 必须做成真正的讲解段落，明确展示题目对象、目标、关键条件或限制，不能只放一个标题然后立刻进入做法。
 30. “解决方案/核心思路” 对应的 segment 必须完整解释方案全貌、关键步骤和为什么这样做，然后再进入样例推演和代码细节，不能只给一句总结。
+31. 不要整支视频都复用同一个固定模板，例如“左边提示栏 + 右边大段文字”。不同 segment 应根据内容切换布局，让题意、思路、样例、代码有明显不同的视觉组织。
+""".strip()
+
+
+SCRIPT_REPAIR_SYSTEM_PROMPT = """
+你是一个 Manim Community Python 脚本修复器。
+
+你的任务是把用户提供的损坏脚本修复成一个完整可运行的 Manim 脚本。
+只允许输出 Python 代码本身，不要解释，不要 Markdown，不要代码块。
+
+硬性要求：
+1. 必须包含 `from manim import *`。
+2. 必须定义 `class AlgorithmVideo(Scene):`。
+3. `construct()` 必须按给定 segments 顺序调用 segment 方法。
+4. 每个 segment 方法只负责按顺序调用该 segment 下的 beat 方法。
+5. 所有给定的 segment 方法和 beat 方法都必须存在，方法名必须完全一致。
+6. 默认必须沿用用户提供的【标准题解】主线，不要擅自改成另一套算法。
+7. 如果原始输出只是被错误包成字符串、带转义换行、代码块不完整、引号未闭合或混入少量说明文字，你要先还原成正常 Python 源码。
+8. 如果原脚本缺少局部内容，可以按给定 storyboard 补全，但不要删掉任何 segment 或 beat。
+9. 修复后的代码必须尽量保留原有讲解意图，同时满足给定 storyboard 的顺序和结构。
 """.strip()
 
 
@@ -193,7 +213,7 @@ def build_storyboard_user_prompt(request: GenerationRequest) -> str:
 - 样例推演必须单独作为一个 segment。
 - 复杂度和代码讲解也需要各自独立 segment。
 - 每个 segment 必须继续拆成多个短 beats，每个 beat 只承载一句核心讲解。
-- 每个 beat 的 narration 必须是可以直接烧到画面上的短句，避免长句、套话和画面无法承载的废话。
+- 每个 beat 的 narration 必须是画面容易承载的短句，避免长句、套话和无法被图形或状态变化表达的废话。
 - 默认以你上面提供的【标准题解】为主线来讲，可以补充细节和推导，但不要另起一套不同的算法路线。
 - 代码讲解 segment 的 visual_goal 和 animation_notes 必须明确提到：代码块保留缩进、使用语法高亮、逐段或逐行高亮当前讲解位置。
 - 各 segment 的 visual_goal 和 animation_notes 要尽量安排更饱满的布局，优先使用双栏、卡片、对照区、步骤区，避免画面中心只有一小块内容。
@@ -217,8 +237,8 @@ def build_storyboard_repair_user_prompt(raw_content: str, error_message: str) ->
 """.strip()
 
 
-def build_script_user_prompt(request: GenerationRequest, storyboard: Storyboard) -> str:
-    storyboard_payload = {
+def _build_storyboard_payload(storyboard: Storyboard) -> dict[str, object]:
+    return {
         "title": storyboard.title,
         "language": storyboard.language,
         "segments": [
@@ -246,6 +266,10 @@ def build_script_user_prompt(request: GenerationRequest, storyboard: Storyboard)
             for segment in storyboard.segments
         ],
     }
+
+
+def build_script_user_prompt(request: GenerationRequest, storyboard: Storyboard) -> str:
+    storyboard_payload = _build_storyboard_payload(storyboard)
     return f"""
 请根据以下材料生成 Manim 脚本。
 
@@ -275,20 +299,58 @@ def build_script_user_prompt(request: GenerationRequest, storyboard: Storyboard)
 - 如果动画本体不够长，请显式加入合适的 `self.wait(...)` 或额外的逐步演示，让该 beat 持续时间接近目标时长。
 - 屏幕文字只能使用分镜里已经出现的术语和结论，必须与 narration 一致。
 - 如果某个信息已经由旁白完整表达，屏幕上只放短标签，不要再写另一句改写版解释。
-- narration 里的所有关键句都必须在画面中出现对应内容；如果做不到图形化，就直接把该句显示出来。
+- narration 里的关键内容必须在画面中有对应体现，但优先靠图形、状态变化、对照关系、样例推演来表达，不要默认把整句旁白打到屏幕上。
 - 不允许出现“口播讲了一大段，但画面只有几个无关标签”的情况。
-- 每个 beat 都必须把整句 narration 体现出来，`must_show` 只是最低要求；如果画面无法完整承载，就直接把该句原文显示出来。
-- 不要把 narration 改写成另一句屏幕文案。口播说什么，屏幕上的关键文字就必须是同一套原词原句。
+- `must_show` 是最低要求，但屏幕上的文字应优先是关键词、步骤名、状态名、结果、复杂度，不要把整句 narration 机械复制成大段字幕。
+- 不要把 narration 改写成另一句屏幕文案，但可以只抽取其中最关键的原词、原短语来做标签。
 - 不要生成冗长的标题页、结束页、感谢页；把时间留给讲题主体。
 - 优先保证动画稳定和清晰，不要为了炫技增加脆弱写法。
 - 代码区如果太长，可以截取核心片段，但必须保留关键逻辑。
 - 默认以我提供的【标准题解】为主线来生成脚本，可以补充细节、边界条件和实现解释，但不要擅自切换成另一套不同算法。
 - 必须先有一段完整镜头用于理解题面，讲清题目对象、目标、关键条件或限制，而不是一闪而过。
 - 必须再有一段完整镜头用于讲解决方案，讲清方案全貌、关键步骤和为什么这样做，然后再进入样例和代码。
+- 不要整支视频都固定成一种版式，尤其不要通篇都是左边说明栏、右边大段文字；题意、思路、样例、代码应切换不同布局。
 - 代码讲解相关 beat 必须使用真正的 `Code` 组件，不要把代码改画成普通文本框。
 - `Code` 的 `code_string` 必须保留原始缩进和换行，不要对代码做 `strip()`、左对齐抹平缩进、或改写成没有层级的伪代码。
 - 代码讲解时要打开行号，并用高亮框、背景块或颜色强调当前讲到的行或片段。
 - 代码讲解画面优先使用“左侧代码 + 右侧解释/状态”或“上方代码 + 下方推演”这类更饱满的布局。
 - 整体布局尽量占满主画幅，避免长期只有屏幕中央一小块内容；可以使用双栏、卡片、对照区、步骤区来提升画面密度。
 - 输出必须是完整的可运行 Python 代码。
+""".strip()
+
+
+def build_script_repair_user_prompt(
+        request: GenerationRequest,
+        storyboard: Storyboard,
+        raw_content: str,
+        issues: list[str],
+) -> str:
+    issue_lines = "\n".join(f"- {issue}" for issue in issues) if issues else "- 需要检查语法和 storyboard 结构。"
+    storyboard_payload = _build_storyboard_payload(storyboard)
+    return f"""
+下面是一段模型返回的 Manim 脚本，但它存在语法或结构问题。
+请在保留原讲解意图的前提下，把它修复成完整可运行的 Python 代码。
+
+视频语言：{request.language}
+题目标题：{request.title}
+
+【结构化分镜】
+{json.dumps(storyboard_payload, ensure_ascii=False, indent=2)}
+
+【标准题解】
+{request.official_solution}
+
+【检测到的问题】
+{issue_lines}
+
+【原始脚本输出】
+{raw_content}
+
+修复要求：
+- 如果原始输出其实是被引号包住的代码字符串，或含 `\\n` 这类转义换行，先还原成真正的 Python 源码。
+- 所有 `segment` 和 `beat` 方法名必须严格匹配 storyboard 里给出的 `method_name`。
+- 方法调用顺序必须严格匹配 storyboard。
+- 可以补全缺失代码，但不要删掉任何 segment 或 beat。
+- 保持用户题解主线，只修复语法、结构和局部实现问题。
+- 只输出修复后的完整 Python 代码。
 """.strip()

@@ -15,6 +15,7 @@ MANIM_IMPORT_RE = re.compile(r"from\s*manim\s*import\s*\*", re.IGNORECASE)
 ALGORITHM_SCENE_RE = re.compile(r"class\s+AlgorithmVideo\s*\(\s*Scene\s*\)\s*:")
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？!?；;])\s*|\n+")
 CLAUSE_SPLIT_RE = re.compile(r"(?<=[，,：:])\s*")
+SERIALIZED_CODE_KEYS = ("code", "script", "python", "content", "manim_code")
 
 
 def _is_code_constructor_result(node: ast.AST | None) -> bool:
@@ -47,16 +48,57 @@ def coerce_message_text(content: object) -> str:
     return ""
 
 
+def _extract_serialized_code(payload: object) -> str | None:
+    if isinstance(payload, str):
+        return payload
+    if isinstance(payload, dict):
+        for key in SERIALIZED_CODE_KEYS:
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+    return None
+
+
+def unwrap_serialized_text(text: str, max_depth: int = 3) -> str:
+    candidate = text.strip()
+    if not candidate:
+        return candidate
+
+    for _ in range(max_depth):
+        parsed: object | None = None
+
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            try:
+                parsed = ast.literal_eval(candidate)
+            except (SyntaxError, ValueError):
+                break
+
+        extracted = _extract_serialized_code(parsed)
+        if not isinstance(extracted, str):
+            break
+
+        normalized = extracted.strip()
+        if not normalized or normalized == candidate:
+            break
+        candidate = normalized
+
+    return candidate
+
+
 def extract_python_code(text: str) -> str:
-    python_match = PYTHON_BLOCK_RE.search(text)
+    normalized_text = unwrap_serialized_text(text)
+
+    python_match = PYTHON_BLOCK_RE.search(normalized_text)
     if python_match:
-        return python_match.group(1).strip()
+        return unwrap_serialized_text(python_match.group(1))
 
-    code_match = CODE_BLOCK_RE.search(text)
+    code_match = CODE_BLOCK_RE.search(normalized_text)
     if code_match:
-        return code_match.group(1).strip()
+        return unwrap_serialized_text(code_match.group(1))
 
-    return text.strip()
+    return normalized_text
 
 
 def extract_json_object(text: str) -> str:
@@ -305,38 +347,23 @@ def build_fallback_manim_code(storyboard: Storyboard) -> str:
             "            fill_color='#101A2B',",
             "            fill_opacity=0.94,",
             "        ).move_to(DOWN * 0.45)",
-            "        left_panel = RoundedRectangle(",
-            "            corner_radius=0.26,",
-            "            width=3.7,",
-            "            height=5.7,",
-            "            stroke_color='#3A5F86',",
-            "            stroke_width=2,",
-            "            fill_color='#13253A',",
-            "            fill_opacity=0.9,",
-            "        ).move_to(LEFT * 4.2 + DOWN * 0.58)",
-            "        right_panel = RoundedRectangle(",
-            "            corner_radius=0.26,",
-            "            width=8.7,",
-            "            height=5.7,",
+            "        content_panel = RoundedRectangle(",
+            "            corner_radius=0.28,",
+            "            width=12.15,",
+            "            height=5.65,",
             "            stroke_color='#334A67',",
             "            stroke_width=2,",
             "            fill_color='#0E1726',",
             "            fill_opacity=0.9,",
-            "        ).move_to(RIGHT * 1.55 + DOWN * 0.58)",
-            "        divider = Line(",
-            "            LEFT * 1.85 + DOWN * 2.18,",
-            "            LEFT * 1.85 + UP * 1.78,",
-            "            color='#28415D',",
-            "            stroke_width=2,",
-            "        )",
-            "        accent = Rectangle(",
-            "            width=0.18,",
-            "            height=5.0,",
+            "        ).move_to(DOWN * 0.58)",
+            "        header_strip = Rectangle(",
+            "            width=12.15,",
+            "            height=0.16,",
             "            stroke_width=0,",
             "            fill_color='#F4C542',",
-            "            fill_opacity=1.0,",
-            "        ).move_to(LEFT * 5.82 + DOWN * 0.58)",
-            "        self.add(top_band, glow, stage, left_panel, right_panel, divider, accent)",
+            "            fill_opacity=0.9,",
+            "        ).move_to(content_panel.get_top() + DOWN * 0.42)",
+            "        self.add(top_band, glow, stage, content_panel, header_strip)",
             "",
             "    def _make_text_block(self, text, font_size=28, color=WHITE, max_chars=18, line_buff=0.18):",
             "        text = str(text or '').strip()",
@@ -375,46 +402,50 @@ def build_fallback_manim_code(storyboard: Storyboard) -> str:
             "        self._header = new_header",
             "",
             "    def _show_beat(self, beat_title, beat_text, must_show):",
-            "        focus_label = Text('当前重点', font_size=21, color='#8DA4C0')",
-            "        focus_label.move_to(LEFT * 4.35 + UP * 1.72)",
-            "        title_block = self._make_text_block(beat_title, font_size=29, color='#A9D2FF', max_chars=10)",
-            "        title_block.next_to(focus_label, DOWN, buff=0.25)",
-            "        title_block.align_to(focus_label, LEFT)",
-            "        keyword_label = Text('必须展示', font_size=20, color='#8DA4C0')",
-            "        keyword_label.next_to(title_block, DOWN, buff=0.42)",
-            "        keyword_label.align_to(focus_label, LEFT)",
-            "        must_show_block = self._make_text_block(must_show, font_size=30, color='#F4C542', max_chars=10)",
-            "        must_show_block.next_to(keyword_label, DOWN, buff=0.22)",
-            "        must_show_block.align_to(focus_label, LEFT)",
-            "        keyword_frame = SurroundingRectangle(",
-            "            must_show_block,",
-            "            color='#F4C542',",
-            "            buff=0.28,",
-            "            corner_radius=0.16,",
+            "        title_text = Text(beat_title, font_size=26, color=BLACK)",
+            "        title_bg = RoundedRectangle(",
+            "            corner_radius=0.18,",
+            "            width=max(2.8, title_text.width + 0.8),",
+            "            height=max(0.7, title_text.height + 0.34),",
+            "            stroke_width=0,",
+            "            fill_color='#F4C542',",
+            "            fill_opacity=1.0,",
             "        )",
-            "        keyword_frame.set_fill('#F4C542', opacity=0.08)",
-            "        left_content = VGroup(focus_label, title_block, keyword_label, keyword_frame, must_show_block)",
+            "        title_chip = VGroup(title_bg, title_text.move_to(title_bg.get_center()))",
+            "        title_chip.move_to(LEFT * 4.45 + UP * 1.92)",
+            "        keyword_block = self._make_text_block(must_show, font_size=24, color='#9FD4FF', max_chars=10, line_buff=0.12)",
+            "        keyword_frame = SurroundingRectangle(",
+            "            keyword_block,",
+            "            color='#35506F',",
+            "            buff=0.24,",
+            "            corner_radius=0.18,",
+            "        )",
+            "        keyword_frame.set_fill('#132B45', opacity=0.92)",
+            "        keyword_group = VGroup(keyword_frame, keyword_block.move_to(keyword_frame.get_center()))",
+            "        keyword_group.move_to(RIGHT * 3.95 + UP * 1.88)",
             "        main_frame = RoundedRectangle(",
             "            corner_radius=0.24,",
-            "            width=8.1,",
-            "            height=5.0,",
+            "            width=11.2,",
+            "            height=4.7,",
             "            stroke_color='#35506F',",
             "            stroke_width=2,",
             "            fill_color='#132237',",
-            "            fill_opacity=0.7,",
-            "        ).move_to(RIGHT * 1.55 + DOWN * 0.62)",
-            "        body_label = Text('主讲内容', font_size=21, color='#8DA4C0')",
-            "        body_label.move_to(main_frame.get_top() + DOWN * 0.45)",
-            "        body_label.align_to(main_frame, LEFT)",
-            "        body_label.shift(RIGHT * 0.45)",
-            "        body_rule = Line(ORIGIN, RIGHT * 6.65, color='#294666', stroke_width=3)",
-            "        body_rule.next_to(body_label, DOWN, buff=0.18)",
-            "        body_rule.align_to(body_label, LEFT)",
-            "        main_block = self._make_text_block(beat_text, font_size=30, color=WHITE, max_chars=16, line_buff=0.22)",
-            "        main_block.next_to(body_rule, DOWN, buff=0.36)",
-            "        main_block.align_to(body_label, LEFT)",
-            "        main_block.shift(DOWN * 0.05)",
-            "        body = VGroup(left_content, main_frame, body_label, body_rule, main_block)",
+            "            fill_opacity=0.72,",
+            "        ).move_to(DOWN * 0.48)",
+            "        body_rule = Line(",
+            "            main_frame.get_left() + RIGHT * 0.48 + UP * 1.52,",
+            "            main_frame.get_right() + LEFT * 0.48 + UP * 1.52,",
+            "            color='#294666',",
+            "            stroke_width=3,",
+            "        )",
+            "        main_block = self._make_text_block(beat_text, font_size=31, color=WHITE, max_chars=18, line_buff=0.22)",
+            "        main_block.next_to(body_rule, DOWN, buff=0.42)",
+            "        main_block.align_to(body_rule, LEFT)",
+            "        progress = VGroup(*[Dot(radius=0.06, color='#35506F') for _ in range(5)])",
+            "        progress.arrange(RIGHT, buff=0.2)",
+            "        progress.move_to(DOWN * 3.02)",
+            "        progress[2].set_color('#F4C542')",
+            "        body = VGroup(title_chip, keyword_group, main_frame, body_rule, main_block, progress)",
             "        if self._body is None:",
             "            self.play(FadeIn(body, shift=UP * 0.15), run_time=0.45)",
             "            self._body = body",
